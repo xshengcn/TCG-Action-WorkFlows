@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # 允许 push 到仓库
+  contents: write
 
 env:
   GIT_NAME: "${{ secrets.GIT_NAME }}"
@@ -18,42 +18,65 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        run: |
+          echo "🔷 正在执行步骤：Checkout repository"
+        uses: actions/checkout@v3
 
       - name: Delete local files
         run: |
+          echo "🔷 正在执行步骤：Delete local files"
           rm -f README.md tcg-pokemon.json sync-metadata.json
 
       - name: Get Pokémon TCG cards data
         run: |
+          echo "🔷 正在执行步骤：Get Pokémon TCG cards data"
+
+          echo "🧹 初始化 tcg-pokemon.json..."
           echo '{"data": [], "totalCount": 0}' > tcg-pokemon.json
+
           page=1
           pageSize=250
 
-          curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
-          totalCount=$(jq '.totalCount' temp.json)
+          echo "🌐 正在获取第 $page 页数据..."
+          curl -sS "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
 
+          echo "📊 读取 totalCount..."
+          totalCount=$(jq '.totalCount' temp.json)
+          echo "👉 共 $totalCount 张卡片"
+
+          echo "📦 写入 totalCount 到 tcg-pokemon.json..."
           jq ".totalCount = $totalCount" tcg-pokemon.json > tcg-pokemon.tmp.json
           jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
           count=$(jq '.count' temp.json)
 
+          echo "🔁 开始分页抓取与合并..."
           while [ $count -eq $pageSize ]; do
+            echo "➕ 合并第 $page 页数据..."
             jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
             jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
             page=$((page + 1))
-            curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
+            echo "🌐 正在获取第 $page 页数据..."
+            curl -sS "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
             count=$(jq '.count' temp.json)
           done
 
+          echo "➕ 合并最后一页数据..."
           jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
           jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
+          echo "🧼 删除临时文件..."
           rm -f temp.json
+
+          card_count=$(jq '[.data[]] | length' tcg-pokemon.json)
+          echo "✅ 数据获取完成，共 $card_count 张卡片"
 
       - name: Transform data structure
         run: |
+          echo "🔷 正在执行步骤：Transform data structure"
+
           jq '{
             totalCount: .totalCount,
             data: (
@@ -67,37 +90,80 @@ jobs:
                 })
             )
           }' tcg-pokemon.json > tcg-pokemon.tmp.json
+
           jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
+          echo "✅ 数据结构转换完成"
 
       - name: Record sync metadata
         run: |
+          echo "🔷 正在执行步骤：Record sync metadata"
+
           timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           totalCards=$(jq '[.data[].cards[]] | length' tcg-pokemon.json)
-          totalSets=$(jq '.data | length' tcg-pokemon.json)
-          jq -n --arg ts "$timestamp" --argjson cards "$totalCards" --argjson sets "$totalSets" \
-            '{timestamp: $ts, totalCards: $cards, totalSets: $sets}' > sync-metadata.json
+          setCount=$(jq '.data | length' tcg-pokemon.json)
+
+          jq -n --arg ts "$timestamp" --argjson cards "$totalCards" --argjson setCount "$setCount" \
+            '{timestamp: $ts, totalCards: $cards, setCount: $setCount}' > sync-metadata.json
+
+          echo "✅ 同步信息写入 sync-metadata.json"
 
       - name: Update README.md
         run: |
-          timestamp=$(jq -r .timestamp sync-metadata.json)
-          formatted_time=$(TZ='Asia/Shanghai' date -d "$timestamp" '+%Y年%m月%d日 %H:%M:%S')
-          echo "## $formatted_time" > README.md
-          echo "TCG-Pokemon: $(jq -r .totalCards sync-metadata.json)" >> README.md
-          echo "" >> README.md
-          echo "Pokémon cards: $(jq -r .totalCards sync-metadata.json)" >> README.md
-          echo "" >> README.md
-          echo "Pokémon sets: $(jq -r .totalSets sync-metadata.json)" >> README.md
+          echo "🔷 正在执行步骤：Update README.md"
+          echo "生成 README.md..."
 
-      # 提交仓库
+          # 读取元数据
+          timestamp=$(jq -r '.timestamp' sync-metadata.json)
+          totalCards=$(jq -r '.totalCards' sync-metadata.json)
+          setCount=$(jq -r '.setCount' sync-metadata.json)
+
+          # 使用 echo 生成 README 内容
+          echo "# Pokemon TCG 数据同步" > README.md
+          echo "" >> README.md
+          echo "## $timestamp" >> README.md
+          echo "" >> README.md
+          echo "## 数据统计" >> README.md
+          echo "- **总卡片数量**: $totalCards 张" >> README.md
+          echo "- **卡组数量**: $setCount 个" >> README.md
+          echo "- **数据来源**: [Pokemon TCG API](https://pokemontcg.io/)" >> README.md
+          echo "" >> README.md
+          echo "## 数据结构" >> README.md
+          echo "\`\`\`json" >> README.md
+          echo "{" >> README.md
+          echo "  \"totalCount\": 数字," >> README.md
+          echo "  \"data\": [" >> README.md
+          echo "    {" >> README.md
+          echo "      \"set\": {" >> README.md
+          echo "        \"id\": \"set_id\"," >> README.md
+          echo "        \"name\": \"set_name\"" >> README.md
+          echo "      }," >> README.md
+          echo "      \"cards\": [...]" >> README.md
+          echo "    }" >> README.md
+          echo "  ]" >> README.md
+          echo "}" >> README.md
+          echo "\`\`\`" >> README.md
+          echo "" >> README.md
+          echo "## 自动更新" >> README.md
+          echo "此数据每2小时自动更新一次，确保数据的时效性。" >> README.md
+          echo "" >> README.md
+          echo "---" >> README.md
+          echo "*数据由 GitHub Actions 自动维护*" >> README.md
+
+          echo "✅ README.md 生成完成"
+
       - name: Commit changes
         run: |
+          echo "🔷 正在执行步骤：Commit changes"
           git config --local user.email "$GIT_EMAIL"
           git config --local user.name "$GIT_NAME"
           git add .
           git commit -m "update"
+          echo "✅ Git 提交完成"
 
       - name: Push changes
-        uses: ad-m/github-push-action@master
+        run: |
+          echo "🔷 正在执行步骤：Push changes"
+        uses: ad-m/github-push-action@v0.6.0
         with:
-          github_token: "$GITHUB_TOKEN"
+          github_token: "${{ secrets.MY_GITHUB_TOKEN }}"
           branch: main
