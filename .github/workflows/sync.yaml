@@ -1,263 +1,100 @@
-name: Sync Pokemon TCG Data
+name: CI
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # 每2小时执行一次（UTC时间）
+    - cron: '0 */2 * * *'  # 每2小时执行一次（UTC）
   workflow_dispatch:
+
+permissions:
+  contents: write  # 允许推送变更
 
 env:
   GIT_NAME: "${{ secrets.GIT_NAME }}"
   GIT_EMAIL: "${{ secrets.GIT_EMAIL }}"
-  GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+  GITHUB_TOKEN: "${{ secrets.MY_GITHUB_TOKEN }}"
 
 jobs:
-  sync-pokemon-data:
+  build:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Clean old files
+      - name: Delete local files
         run: |
-          echo "删除旧文件..."
-          rm -f README.md tcg-pokemon.json sync-metadata.json tcg-pokemon-temp.json
-          echo "文件清理完成"
+          rm -f README.md tcg-pokemon.json sync-metadata.json
 
-      - name: Fetch all Pokemon TCG data
+      - name: Get Pokémon TCG cards data
         run: |
-          echo "开始获取 Pokemon TCG 数据..."
-          
-          # 初始化变量
+          echo '{"data": [], "totalCount": 0}' > tcg-pokemon.json
           page=1
           pageSize=250
-          totalCount=0
           
-          echo "正在获取第 $page 页数据..."
-          
-          # 获取第一页数据以确定总数
-          response=$(curl -s "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize")
-          
-          # 检查 API 响应是否有效
-          if ! echo "$response" | jq empty 2>/dev/null; then
-            echo "API 响应无效，退出"
-            exit 1
-          fi
-          
-          totalCount=$(echo "$response" | jq -r '.totalCount // 0')
-          count=$(echo "$response" | jq -r '.count // 0')
-          
-          # 创建临时 JSON 文件，保存原始结构
-          echo "$response" | jq '{totalCount: .totalCount, data: .data}' > tcg-pokemon-temp.json
-          
-          echo "总卡片数: $totalCount"
-          echo "第 $page 页获取了 $count 张卡片"
-          
-          # 继续获取剩余页面，合并到临时文件
-          while [ "$count" -eq "$pageSize" ] && [ "$count" -gt 0 ]; do
-            page=$((page + 1))
-            echo "正在获取第 $page 页数据..."
-            
-            response=$(curl -s "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize")
-            
-            # 检查响应有效性
-            if ! echo "$response" | jq empty 2>/dev/null; then
-              echo "第 $page 页响应无效，停止获取"
-              break
-            fi
-            
-            count=$(echo "$response" | jq -r '.count // 0')
-            
-            if [ "$count" -gt 0 ]; then
-              # 合并数据到临时文件
-              jq --argjson newData "$(echo "$response" | jq '.data')" \
-                '.data += $newData' tcg-pokemon-temp.json > tcg-pokemon-temp-merged.json && \
-                mv tcg-pokemon-temp-merged.json tcg-pokemon-temp.json
-              
-              echo "第 $page 页获取了 $count 张卡片"
-            fi
-          done
-          
-          # 验证临时文件数据
-          finalCount=$(jq '.data | length' tcg-pokemon-temp.json)
-          echo "数据获取完成，共 $finalCount 张卡片已保存到临时文件"
-          
-          # 检查数据有效性
-          if [ "$finalCount" -eq 0 ]; then
-            echo "错误：未获取到任何卡片数据"
-            exit 1
-          fi
+          curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
+          totalCount=$(jq '.totalCount' temp.json)
 
-      - name: Transform data structure by sets
+          jq ".totalCount = $totalCount" tcg-pokemon.json > tcg-pokemon.tmp.json
+          jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
+
+          count=$(jq '.count' temp.json)
+
+          while [ $count -eq $pageSize ]; do
+            jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
+            jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
+
+            page=$((page + 1))
+            curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
+            count=$(jq '.count' temp.json)
+          done
+
+          jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
+          jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
+
+          rm -f temp.json
+
+      - name: Transform data structure
         run: |
-          echo "从临时文件转换数据结构..."
-          
-          # 验证临时文件是否存在
-          if [ ! -f "tcg-pokemon-temp.json" ]; then
-            echo "错误：临时文件不存在"
-            exit 1
-          fi
-          
-          # 验证数据结构是否正确
-          if ! jq -e '.data | type == "array"' tcg-pokemon-temp.json > /dev/null; then
-            echo "错误：临时文件中的 data 字段不是数组"
-            exit 1
-          fi
-          
-          # 检查是否有卡片数据
-          cardCount=$(jq '.data | length' tcg-pokemon-temp.json)
-          if [ "$cardCount" -eq 0 ]; then
-            echo "错误：临时文件中没有卡片数据可以转换"
-            exit 1
-          fi
-          
-          echo "准备转换 $cardCount 张卡片..."
-          
-          # 验证第一张卡片是否有 set 字段
-          if ! jq -e '.data[0].set' tcg-pokemon-temp.json > /dev/null; then
-            echo "错误：卡片数据缺少 set 字段"
-            jq '.data[0]' tcg-pokemon-temp.json
-            exit 1
-          fi
-          
-          # 从临时文件按 set.id 分组，将 set 作为主体，cards 去掉 set 属性
           jq '{
             totalCount: .totalCount,
             data: [
-              .data | group_by(.set.id)[] | 
-              (.[0].set + {
-                cards: [.[] | del(.set)]
-              })
+              group_by(.set.id)[]
+              | {
+                  id: .[0].set.id,
+                  name: .[0].set.name,
+                  cards: [ .[] | del(.set) ]
+                }
             ]
-          }' tcg-pokemon-temp.json > tcg-pokemon.json
-          
-          # 验证转换结果
-          if jq -e '.data | type == "array" and length > 0' tcg-pokemon.json > /dev/null; then
-            setCount=$(jq '.data | length' tcg-pokemon.json)
-            echo "数据结构转换完成，共 $setCount 个卡组"
-            
-            # 删除临时文件
-            rm tcg-pokemon-temp.json
-            echo "临时文件已删除"
-          else
-            echo "错误：数据转换失败"
-            exit 1
-          fi
+          }' tcg-pokemon.json > tcg-pokemon.tmp.json
+          jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
-      - name: Write sync metadata
+      - name: Record sync metadata
         run: |
-          echo "写入同步元数据..."
-          
-          totalCards=$(jq '.totalCount' tcg-pokemon.json)
-          currentTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          
-          # 计算 set 数量（按 set.id 去重）
-          setCount=$(jq '.data | length' tcg-pokemon.json)
-          
-          # 创建元数据文件
-          jq -n \
-            --arg timestamp "$currentTime" \
-            --argjson totalCards "$totalCards" \
-            --argjson setCount "$setCount" \
-            '{
-              timestamp: $timestamp,
-              totalCards: $totalCards,
-              setCount: $setCount
-            }' > sync-metadata.json
-          
-          echo "元数据写入完成"
+          timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          totalCards=$(jq '[.data[].cards[]] | length' tcg-pokemon.json)
+          totalSets=$(jq '.data | length' tcg-pokemon.json)
+          jq -n --arg ts "$timestamp" --argjson cards "$totalCards" --argjson sets "$totalSets" \
+            '{timestamp: $ts, totalCards: $cards, totalSets: $sets}' > sync-metadata.json
 
-      - name: Compress JSON file
+      - name: Update README.md
         run: |
-          echo "压缩 JSON 文件..."
-          
-          # 确保文件是压缩格式（移除多余空格和换行）
-          jq -c . tcg-pokemon.json > tcg-pokemon-compressed.json
-          mv tcg-pokemon-compressed.json tcg-pokemon.json
-          
-          # 显示文件大小
-          fileSize=$(du -h tcg-pokemon.json | cut -f1)
-          echo "压缩后文件大小: $fileSize"
+          timestamp=$(jq -r .timestamp sync-metadata.json)
+          formatted_time=$(TZ='Asia/Shanghai' date -d "$timestamp" '+%Y年%m月%d日 %H:%M:%S')
+          echo "## $formatted_time" > README.md
+          echo "TCG-Pokemon: $(jq -r .totalCards sync-metadata.json)" >> README.md
+          echo "" >> README.md
+          echo "Pokémon cards: $(jq -r .totalCards sync-metadata.json)" >> README.md
+          echo "" >> README.md
+          echo "Pokémon sets: $(jq -r .totalSets sync-metadata.json)" >> README.md
 
-      - name: Generate README.md
+      - name: Commit changes
         run: |
-          echo "生成 README.md..."
-          
-          # 读取元数据
-          timestamp=$(jq -r '.timestamp' sync-metadata.json)
-          totalCards=$(jq -r '.totalCards' sync-metadata.json)
-          setCount=$(jq -r '.setCount' sync-metadata.json)
-          
-          # 使用 echo 生成 README 内容
-          echo "# Pokemon TCG 数据同步" > README.md
-          echo "" >> README.md
-          echo "## $timestamp" >> README.md
-          echo "" >> README.md
-          echo "## 数据统计" >> README.md
-          echo "- **总卡片数量**: $totalCards 张" >> README.md
-          echo "- **卡组数量**: $setCount 个" >> README.md
-          echo "- **数据来源**: [Pokemon TCG API](https://pokemontcg.io/)" >> README.md
-          echo "" >> README.md
-          echo "## 数据结构" >> README.md
-          echo "\`\`\`json" >> README.md
-          echo "{" >> README.md
-          echo "  \"totalCount\": 数字," >> README.md
-          echo "  \"data\": [" >> README.md
-          echo "    {" >> README.md
-          echo "      \"set\": {" >> README.md
-          echo "        \"id\": \"set_id\"," >> README.md
-          echo "        \"name\": \"set_name\"" >> README.md
-          echo "      }," >> README.md
-          echo "      \"cards\": [...]" >> README.md
-          echo "    }" >> README.md
-          echo "  ]" >> README.md
-          echo "}" >> README.md
-          echo "\`\`\`" >> README.md
-          echo "" >> README.md
-          echo "## 自动更新" >> README.md
-          echo "此数据每2小时自动更新一次，确保数据的时效性。" >> README.md
-          echo "" >> README.md
-          echo "---" >> README.md
-          echo "*数据由 GitHub Actions 自动维护*" >> README.md
-          
-          echo "README.md 生成完成"
-
-      - name: Commit and push changes
-        run: |
-          echo "提交更改..."
-          
-          # 配置 Git
           git config --local user.email "$GIT_EMAIL"
           git config --local user.name "$GIT_NAME"
-          
-          # 检查是否有更改
-          if git diff --quiet && git diff --cached --quiet; then
-            echo "没有检测到更改，跳过提交"
-            exit 0
-          fi
-          
-          # 添加所有文件并提交
           git add .
-          
-          # 创建提交信息
-          totalCards=$(jq -r '.totalCards' sync-metadata.json)
-          setCount=$(jq -r '.setCount' sync-metadata.json)
-          commitMsg="📱 更新 Pokemon TCG 数据 - $totalCards 张卡片, $setCount 个卡组"
-          
-          git commit -m "$commitMsg"
-          
-          echo "提交完成，准备推送..."
+          git diff --quiet || git commit -m "update"
 
-      - name: Push to repository
-        uses: ad-m/github-push-action@master
+      - name: Push changes
+        uses: ad-m/github-push-action@v0.6.0
         with:
-          github_token: ${{ secrets.MY_GITHUB_TOKEN }}
+          github_token: "${{ secrets.MY_GITHUB_TOKEN }}"
           branch: main
-
-      - name: Summary
-        run: |
-          echo "🎉 同步完成!"
-          echo "📊 统计信息:"
-          echo "   - 总卡片数: $(jq -r '.totalCards' sync-metadata.json)"
-          echo "   - 卡组数量: $(jq -r '.setCount' sync-metadata.json)"
-          echo "   - 更新时间: $(jq -r '.timestamp' sync-metadata.json)"
