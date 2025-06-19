@@ -19,8 +19,6 @@ jobs:
 
     steps:
       - name: Checkout repository
-        run: |
-          echo "🔷 正在执行步骤：Checkout repository"
         uses: actions/checkout@v3
 
       - name: Delete local files
