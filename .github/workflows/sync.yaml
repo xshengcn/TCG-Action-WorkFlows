@@ -8,7 +8,7 @@ on:
 env:
   GIT_NAME: "${{ secrets.GIT_NAME }}"
   GIT_EMAIL: "${{ secrets.GIT_EMAIL }}"
-  GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN  }}
 
 jobs:
   build:
@@ -16,6 +16,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+
+      # 删除本地的usd_rate.json和cny_rate.json文件
+      - name: Delete local files
+        run: |
+          rm -f README.md
+          rm -f tcg-pokemon.json
+
 
       - name: Get Pokémon TCG cards data
         run: |
