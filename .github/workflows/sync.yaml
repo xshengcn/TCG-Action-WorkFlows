@@ -165,3 +165,11 @@ jobs:
         with:
           github_token: "${{ secrets.MY_GITHUB_TOKEN }}"
           branch: main
+          
+      - name: Summary
+        run: |
+          echo "🎉 同步完成!"
+          echo "📊 统计信息:"
+          echo "   - 总卡片数: $(jq -r '.totalCards' sync-metadata.json)"
+          echo "   - 卡组数量: $(jq -r '.setCount' sync-metadata.json)"
+          echo "   - 更新时间: $(jq -r '.timestamp' sync-metadata.json)"
