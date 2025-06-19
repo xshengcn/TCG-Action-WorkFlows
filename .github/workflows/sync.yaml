@@ -136,14 +136,14 @@ jobs:
             exit 1
           fi
           
-          # 按 set.id 分组，重构为 set 为主的数据结构
+          # 按 set.id 分组，将 set 作为主体，cards 去掉 set 属性
           jq '{
             totalCount: .totalCount,
             data: [
-              .data | group_by(.set.id)[] | {
-                set: .[0].set,
-                cards: .
-              }
+              .data | group_by(.set.id)[] | 
+              (.[0].set + {
+                cards: [.[] | del(.set)]
+              })
             ]
           }' tcg-pokemon.json > tcg-pokemon-temp.json
           
