@@ -37,7 +37,8 @@ jobs:
 
           # 更新 totalCount 字段
           jq ".totalCount = $totalCount" tcg-pokemon.json > tcg-pokemon.tmp.json
-          mv tcg-pokemon.tmp.json tcg-pokemon.json
+          # 压缩JSON文件并替换原文件
+          jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
           count=$(jq '.count' temp.json)
 
@@ -45,7 +46,8 @@ jobs:
           while [ $count -eq $pageSize ]; do
             # 合并当前页数据
             jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
-            mv tcg-pokemon.tmp.json tcg-pokemon.json
+            # 压缩JSON文件并替换原文件
+            jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
             page=$((page + 1))
             curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
@@ -54,7 +56,8 @@ jobs:
 
           # 合并最后一页数据
           jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
-          mv tcg-pokemon.tmp.json tcg-pokemon.json
+          # 压缩JSON文件并替换原文件
+          jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
           # 清理临时文件
           rm temp.json
