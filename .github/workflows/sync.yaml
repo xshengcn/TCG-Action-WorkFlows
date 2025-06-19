@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # 允许推送变更
+  contents: write  # 允许 push 到仓库
 
 env:
   GIT_NAME: "${{ secrets.GIT_NAME }}"
@@ -29,7 +29,7 @@ jobs:
           echo '{"data": [], "totalCount": 0}' > tcg-pokemon.json
           page=1
           pageSize=250
-          
+
           curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
           totalCount=$(jq '.totalCount' temp.json)
 
@@ -56,14 +56,16 @@ jobs:
         run: |
           jq '{
             totalCount: .totalCount,
-            data: [
-              group_by(.set.id)[]
-              | {
+            data: (
+              .data
+              | sort_by(.set.id)
+              | group_by(.set.id)
+              | map({
                   id: .[0].set.id,
                   name: .[0].set.name,
-                  cards: [ .[] | del(.set) ]
-                }
-            ]
+                  cards: map(del(.set))
+                })
+            )
           }' tcg-pokemon.json > tcg-pokemon.tmp.json
           jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
 
