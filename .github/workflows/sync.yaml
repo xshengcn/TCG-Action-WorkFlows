@@ -22,6 +22,7 @@ jobs:
         run: |
           rm -f README.md
           rm -f tcg-pokemon.json
+          rm -f sync-metadata.json
 
 
       - name: Get Pokémon TCG cards data
@@ -61,6 +62,11 @@ jobs:
 
           # 清理临时文件
           rm temp.json
+
+      - name: Record sync metadata
+        run: |
+          # 记录当前执行时间和总卡牌数量到JSON文件
+          jq -n --arg ts "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" --argjson count "$(jq .totalCount tcg-pokemon.json)" '{"timestamp": $ts, "totalCards": $count}' > sync-metadata.json
 
       - name: Update README.md
         run: |
