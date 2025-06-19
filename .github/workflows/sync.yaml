@@ -1,4 +1,4 @@
-name: CI
+name: SYNC POKEMON TCG
 
 on:
   schedule:
@@ -129,6 +129,17 @@ jobs:
 
           echo "✅ 写入 sync-metadata.json（版本：v$version）完成"
 
+      - name: Add version to tcg-pokemon.json
+        run: |
+          echo "🔷 正在执行步骤：Add version to tcg-pokemon.json"
+
+          version=$(jq -r '.version' sync-metadata.json)
+
+          jq --argjson version "$version" '.version = $version | .' tcg-pokemon.json > tcg-pokemon.tmp.json
+          jq -c . tcg-pokemon.tmp.json > tcg-pokemon.json && rm tcg-pokemon.tmp.json
+
+          echo "✅ 已添加 version 字段到 tcg-pokemon.json（v$version）"
+
       - name: Update README.md
         run: |
           echo "🔷 正在执行步骤：Update README.md"
@@ -153,6 +164,7 @@ jobs:
           echo "\`\`\`json" >> README.md
           echo "{" >> README.md
           echo "  \"totalCount\": 数字," >> README.md
+          echo "  \"version\": 数字," >> README.md
           echo "  \"data\": [" >> README.md
           echo "    {" >> README.md
           echo "      \"set\": {" >> README.md
