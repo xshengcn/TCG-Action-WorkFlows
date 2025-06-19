@@ -161,8 +161,6 @@ jobs:
           echo "✅ Git 提交完成"
 
       - name: Push changes
-        run: |
-          echo "🔷 正在执行步骤：Push changes"
         uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: "${{ secrets.MY_GITHUB_TOKEN }}"
