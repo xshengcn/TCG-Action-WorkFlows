@@ -25,6 +25,8 @@ jobs:
         run: |
           echo "🔷 正在执行步骤：Delete local files"
           rm -f README.md 
+          rm -f tcg-pokemon.old.json
+          cp tcg-pokemon.json tcg-pokemon.old.json 2>/dev/null || true
           rm -f tcg-pokemon.json
           rm -f sync-metadata.json
 
@@ -102,27 +104,47 @@ jobs:
           totalCards=$(jq '[.data[].cards[]] | length' tcg-pokemon.json)
           setCount=$(jq '.data | length' tcg-pokemon.json)
 
-          jq -n --arg ts "$timestamp" --argjson cards "$totalCards" --argjson setCount "$setCount" \
-            '{timestamp: $ts, totalCards: $cards, setCount: $setCount}' > sync-metadata.json
+          version=1
+          if [ -f sync-metadata.json ]; then
+            old_version=$(jq -r '.version // 1' sync-metadata.json)
+            version=$old_version
+          fi
 
-          echo "✅ 同步信息写入 sync-metadata.json"
+          if [ -f tcg-pokemon.old.json ]; then
+            if ! diff -q tcg-pokemon.old.json tcg-pokemon.json > /dev/null; then
+              echo "🔄 数据发生变化，版本号 +1"
+              version=$((version + 1))
+            else
+              echo "✅ 数据无变化，版本号保持为 $version"
+            fi
+            rm -f tcg-pokemon.old.json
+          fi
+
+          jq -n \
+            --arg ts "$timestamp" \
+            --argjson cards "$totalCards" \
+            --argjson setCount "$setCount" \
+            --argjson version "$version" \
+            '{timestamp: $ts, totalCards: $cards, setCount: $setCount, version: $version}' > sync-metadata.json
+
+          echo "✅ 写入 sync-metadata.json（版本：v$version）完成"
 
       - name: Update README.md
         run: |
           echo "🔷 正在执行步骤：Update README.md"
           echo "生成 README.md..."
 
-          # 读取元数据
           timestamp=$(jq -r '.timestamp' sync-metadata.json)
           totalCards=$(jq -r '.totalCards' sync-metadata.json)
           setCount=$(jq -r '.setCount' sync-metadata.json)
+          version=$(jq -r '.version' sync-metadata.json)
 
-          # 使用 echo 生成 README 内容
           echo "# Pokemon TCG 数据同步" > README.md
           echo "" >> README.md
           echo "## $timestamp" >> README.md
           echo "" >> README.md
           echo "## 数据统计" >> README.md
+          echo "- **版本号**: v$version" >> README.md
           echo "- **总卡片数量**: $totalCards 张" >> README.md
           echo "- **卡组数量**: $setCount 个" >> README.md
           echo "- **数据来源**: [Pokemon TCG API](https://pokemontcg.io/)" >> README.md
@@ -157,15 +179,19 @@ jobs:
           git config --local user.email "$GIT_EMAIL"
           git config --local user.name "$GIT_NAME"
           git add .
-          git commit -m "update"
-          echo "✅ Git 提交完成"
+          if git diff --cached --quiet; then
+            echo "✅ 无变更，无需提交"
+          else
+            git commit -m "update"
+            echo "✅ Git 提交完成"
+          fi
 
       - name: Push changes
         uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: "${{ secrets.MY_GITHUB_TOKEN }}"
           branch: main
-          
+
       - name: Summary
         run: |
           echo "🎉 同步完成!"
@@ -173,3 +199,4 @@ jobs:
           echo "   - 总卡片数: $(jq -r '.totalCards' sync-metadata.json)"
           echo "   - 卡组数量: $(jq -r '.setCount' sync-metadata.json)"
           echo "   - 更新时间: $(jq -r '.timestamp' sync-metadata.json)"
+          echo "   - 当前版本: v$(jq -r '.version' sync-metadata.json)"
