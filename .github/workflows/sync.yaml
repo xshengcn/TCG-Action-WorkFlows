@@ -24,7 +24,9 @@ jobs:
       - name: Delete local files
         run: |
           echo "🔷 正在执行步骤：Delete local files"
-          rm -f README.md tcg-pokemon.json sync-metadata.json
+          rm -f README.md 
+          rm -f tcg-pokemon.json
+          rm -f sync-metadata.json
 
       - name: Get Pokémon TCG cards data
         run: |
