@@ -1,81 +1,57 @@
-# This is a basic workflow to help you get started with Actions
-
 name: CI
 
-# Controls when the workflow will run
-# on:
-#   # Triggers the workflow on push or pull request events but only for the "main" branch
-#   push:
-#     branches: [ "main" ]
-#   pull_request:
-#     branches: [ "main" ]
-
-# 每10分钟执行一次
 on:
   schedule:
-    - cron: '*/120 * * * *'
-
-  # Allows you to run this workflow manually from the Actions tab
+    - cron: '0 */2 * * *'  # 每2小时执行一次（UTC时间）
   workflow_dispatch:
 
 env:
   GIT_NAME: "${{ secrets.GIT_NAME }}"
   GIT_EMAIL: "${{ secrets.GIT_EMAIL }}"
-  GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN  }}
+  GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
 
-# 每5分钟执行一次
-# on:
-#   schedule:
-#     - cron: '*/5 * * * *'
-
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
-
-      # 删除本地的usd_rate.json和cny_rate.json文件
 
       - name: Get Pokémon TCG cards data
         run: |
-          # 初始化JSON文件
+          # 初始化 JSON 文件
           echo '{"data": [], "totalCount": 0}' > tcg-pokemon.json
           page=1
           pageSize=250
           
-          # 首次请求获取totalCount
+          # 请求第一页数据
           curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
           totalCount=$(jq '.totalCount' temp.json)
-          jq --arg total "$totalCount" '.totalCount = $total' tcg-pokemon.json > tcg-pokemon.tmp.json
+
+          # 更新 totalCount 字段
+          jq ".totalCount = $totalCount" tcg-pokemon.json > tcg-pokemon.tmp.json
           mv tcg-pokemon.tmp.json tcg-pokemon.json
-          
+
           count=$(jq '.count' temp.json)
-          
-          # 循环获取所有页面
+
+          # 循环处理每页数据
           while [ $count -eq $pageSize ]; do
             # 合并当前页数据
-            jq --argfile temp temp.json '.data += $temp.data' tcg-pokemon.json > tcg-pokemon.tmp.json
+            jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
             mv tcg-pokemon.tmp.json tcg-pokemon.json
-            
+
             page=$((page + 1))
             curl "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize" > temp.json
             count=$(jq '.count' temp.json)
           done
-          
+
           # 合并最后一页数据
-          jq --argfile temp temp.json '.data += $temp.data' tcg-pokemon.json > tcg-pokemon.tmp.json
+          jq -s '.[0].data += .[1].data | .[0]' tcg-pokemon.json temp.json > tcg-pokemon.tmp.json
           mv tcg-pokemon.tmp.json tcg-pokemon.json
-          
+
           # 清理临时文件
           rm temp.json
 
-      # 将当前时间输出到README.md
       - name: Update README.md
         run: |
           echo "## $(TZ='Asia/Shanghai' date '+%Y年%m月%d日 %H:%M:%S')" > README.md
@@ -85,17 +61,15 @@ jobs:
           echo "" >> README.md
           echo "Pokémon sets: $(cat tcg-pokemon.json | jq '.data | unique_by(.set.name) | length')" >> README.md
 
-      # 提交仓库
       - name: Commit changes
         run: |
           git config --local user.email "$GIT_EMAIL"
           git config --local user.name "$GIT_NAME"
           git add .
-          git commit -m "update"
+          git diff --quiet || git commit -m "update"
 
       - name: Push changes
-        uses: ad-m/github-push-action@master
+        uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: "$GITHUB_TOKEN"
           branch: main
-
