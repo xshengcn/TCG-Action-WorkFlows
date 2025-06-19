@@ -31,42 +31,61 @@ jobs:
           # 初始化变量
           page=1
           pageSize=250
-          allCards='[]'
           totalCount=0
           
           echo "正在获取第 $page 页数据..."
           
           # 获取第一页数据以确定总数
           response=$(curl -s "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize")
-          totalCount=$(echo "$response" | jq '.totalCount')
-          count=$(echo "$response" | jq '.count')
-          cards=$(echo "$response" | jq '.data')
           
-          # 合并第一页数据
-          allCards=$(echo "$allCards $cards" | jq -s 'add')
+          # 检查 API 响应是否有效
+          if ! echo "$response" | jq empty 2>/dev/null; then
+            echo "API 响应无效，退出"
+            exit 1
+          fi
+          
+          totalCount=$(echo "$response" | jq -r '.totalCount // 0')
+          count=$(echo "$response" | jq -r '.count // 0')
+          
+          # 初始化 JSON 文件，确保正确的结构
+          echo "$response" | jq '{totalCount: .totalCount, data: .data}' > tcg-pokemon.json
           
           echo "总卡片数: $totalCount"
           echo "第 $page 页获取了 $count 张卡片"
           
           # 继续获取剩余页面
-          while [ "$count" -eq "$pageSize" ]; do
+          while [ "$count" -eq "$pageSize" ] && [ "$count" -gt 0 ]; do
             page=$((page + 1))
             echo "正在获取第 $page 页数据..."
             
             response=$(curl -s "https://api.pokemontcg.io/v2/cards?page=$page&pageSize=$pageSize")
-            count=$(echo "$response" | jq '.count')
-            cards=$(echo "$response" | jq '.data')
             
-            # 合并数据
-            allCards=$(echo "$allCards $cards" | jq -s 'add')
+            # 检查响应有效性
+            if ! echo "$response" | jq empty 2>/dev/null; then
+              echo "第 $page 页响应无效，停止获取"
+              break
+            fi
             
-            echo "第 $page 页获取了 $count 张卡片"
+            count=$(echo "$response" | jq -r '.count // 0')
+            
+            if [ "$count" -gt 0 ]; then
+              # 合并数据到现有文件
+              jq --argjson newData "$(echo "$response" | jq '.data')" \
+                '.data += $newData' tcg-pokemon.json > temp.json && mv temp.json tcg-pokemon.json
+              
+              echo "第 $page 页获取了 $count 张卡片"
+            fi
           done
           
-          # 创建最终的 JSON 结构
-          echo "{\"totalCount\": $totalCount, \"data\": $allCards}" | jq -c . > tcg-pokemon.json
+          # 验证最终数据结构
+          finalCount=$(jq '.data | length' tcg-pokemon.json)
+          echo "数据获取完成，共 $finalCount 张卡片"
           
-          echo "数据获取完成，共 $(echo "$allCards" | jq length) 张卡片"
+          # 检查数据有效性
+          if [ "$finalCount" -eq 0 ]; then
+            echo "错误：未获取到任何卡片数据"
+            exit 1
+          fi
 
       - name: Write sync metadata
         run: |
@@ -95,22 +114,52 @@ jobs:
         run: |
           echo "按 set 重构数据结构..."
           
-          # 按 set.id 分组并重构数据
+          # 验证数据结构是否正确
+          if ! jq -e '.data | type == "array"' tcg-pokemon.json > /dev/null; then
+            echo "错误：tcg-pokemon.json 中的 data 字段不是数组"
+            exit 1
+          fi
+          
+          # 检查是否有卡片数据
+          cardCount=$(jq '.data | length' tcg-pokemon.json)
+          if [ "$cardCount" -eq 0 ]; then
+            echo "错误：没有卡片数据可以转换"
+            exit 1
+          fi
+          
+          echo "准备转换 $cardCount 张卡片..."
+          
+          # 验证第一张卡片是否有 set 字段
+          if ! jq -e '.data[0].set' tcg-pokemon.json > /dev/null; then
+            echo "错误：卡片数据缺少 set 字段"
+            jq '.data[0]' tcg-pokemon.json
+            exit 1
+          fi
+          
+          # 按 set.id 分组，重构为 set 为主的数据结构
           jq '{
             totalCount: .totalCount,
             data: [
-              group_by(.set.id)[] | {
+              .data | group_by(.set.id)[] | {
                 set: .[0].set,
                 cards: .
               }
             ]
           }' tcg-pokemon.json > tcg-pokemon-temp.json
           
-          # 压缩并替换原文件
-          jq -c . tcg-pokemon-temp.json > tcg-pokemon.json
-          rm tcg-pokemon-temp.json
-          
-          echo "数据结构转换完成"
+          # 验证转换结果
+          if jq -e '.data | type == "array" and length > 0' tcg-pokemon-temp.json > /dev/null; then
+            # 压缩并替换原文件
+            jq -c . tcg-pokemon-temp.json > tcg-pokemon.json
+            rm tcg-pokemon-temp.json
+            
+            setCount=$(jq '.data | length' tcg-pokemon.json)
+            echo "数据结构转换完成，共 $setCount 个卡组"
+          else
+            echo "错误：数据转换失败"
+            rm tcg-pokemon-temp.json
+            exit 1
+          fi
 
       - name: Compress JSON file
         run: |
