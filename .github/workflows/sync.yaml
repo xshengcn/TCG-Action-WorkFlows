@@ -88,15 +88,16 @@ jobs:
           echo "" >> README.md
           echo "Pokémon sets: $(jq -r .totalSets sync-metadata.json)" >> README.md
 
+      # 提交仓库
       - name: Commit changes
         run: |
           git config --local user.email "$GIT_EMAIL"
           git config --local user.name "$GIT_NAME"
           git add .
-          git diff --quiet || git commit -m "update"
+          git commit -m "update"
 
       - name: Push changes
-        uses: ad-m/github-push-action@v0.6.0
+        uses: ad-m/github-push-action@master
         with:
-          github_token: "${{ secrets.MY_GITHUB_TOKEN }}"
+          github_token: "$GITHUB_TOKEN"
           branch: main
